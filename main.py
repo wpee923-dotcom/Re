@@ -3,14 +3,14 @@ import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# إعداد التسجيل بشكل مفصل
+# إعداد التسجيل
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-OWNER_ID = 7076215547  # ضع ايدي المطور هنا
+OWNER_ID = 7076215547  # ايدي المطور (ثبته)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -33,59 +33,61 @@ async def forward_to_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"خطأ في التوجيه: {e}")
 
 async def handle_owner_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة رد المطور على إحدى الرسائل المُعاد توجيهها"""
-    # تأكد أن المرسل هو المطور
+    """معالجة رد المطور وإرساله للمستخدم الأصلي"""
+    # تأكد من أن المرسل هو المطور
     if update.effective_user.id != OWNER_ID:
-        logger.info("رسالة من غير المطور - يتم تجاهلها")
+        logger.info("الرسالة ليست من المطور - تجاهل")
         return
 
-    # تأكد أن الرسالة هي رد على رسالة سابقة
+    # تأكد من أن الرسالة هي رد على رسالة سابقة
     if not update.message.reply_to_message:
-        logger.info("المطور أرسل رسالة بدون رد - يتم تجاهلها")
+        logger.info("المطور أرسل رسالة بدون رد - تجاهل")
         return
 
-    replied_msg = update.message.reply_to_message
-    logger.info(f"تم استلام رد من المطور على رسالة: {replied_msg.message_id}")
+    logger.info("تم استلام رد من المطور على رسالة سابقة")
 
-    # محاولة استخراج ايدي المستخدم الأصلي بعدة طرق
+    replied = update.message.reply_to_message
+
+    # سجل معلومات عن الرسالة المُردود عليها
+    logger.info(f"الرسالة المُردود عليها: ID={replied.message_id}, من={replied.from_user.id if replied.from_user else 'لا يوجد'}")
+
+    # حاول استخراج ايدي المستخدم الأصلي بعدة طرق
     original_user_id = None
 
-    # الطريقة 1: إذا كانت الرسالة المُردود عليها مُعاد توجيهها من مستخدم
-    if replied_msg.forward_origin:
-        if replied_msg.forward_origin.type == 'user':
-            original_user_id = replied_msg.forward_origin.sender_user.id
-            logger.info(f"الطريقة 1: استخراج الايدي من forward_origin: {original_user_id}")
+    # الطريقة الأولى: من forward_origin
+    if replied.forward_origin:
+        logger.info(f"forward_origin موجود، نوعه: {replied.forward_origin.type}")
+        if replied.forward_origin.type == 'user':
+            original_user_id = replied.forward_origin.sender_user.id
+            logger.info(f"تم العثور على ايدي المستخدم من forward_origin: {original_user_id}")
 
-    # الطريقة 2: إذا لم تنجح الطريقة 1، نحاول من خلال معرف المرسل للرسالة المُعاد توجيهها
-    if not original_user_id and replied_msg.from_user:
-        original_user_id = replied_msg.from_user.id
-        logger.info(f"الطريقة 2: استخراج الايدي من from_user: {original_user_id}")
+    # الطريقة الثانية: إذا لم تنجح الأولى، قد تكون الرسالة المُردود عليها هي نفس رسالة المستخدم (بدون توجيه) - هذا وارد إذا كان المطور في مجموعة
+    if not original_user_id and replied.from_user:
+        if replied.from_user.id != OWNER_ID:  # نتجنب أن يكون المطور نفسه
+            original_user_id = replied.from_user.id
+            logger.info(f"تم العثور على ايدي المستخدم من from_user: {original_user_id}")
 
-    # الطريقة 3: البحث عن ايدي المستخدم في نص الرسالة (إذا كان مضمنًا بالصيغة [ايدي])
-    if not original_user_id and replied_msg.text:
+    # الطريقة الثالثة: البحث عن ايدي في نص الرسالة الترحيبية (إذا كان المستخدم قد أرسل /start مؤخراً)
+    if not original_user_id and replied.text:
         import re
-        match = re.search(r'\[‏(\d+)\]', replied_msg.text)
+        match = re.search(r'\[‏(\d+)\]', replied.text)
         if match:
             original_user_id = int(match.group(1))
-            logger.info(f"الطريقة 3: استخراج الايدي من النص: {original_user_id}")
+            logger.info(f"تم العثور على ايدي المستخدم من النص: {original_user_id}")
 
     if not original_user_id:
-        await update.message.reply_text("❌ لم أتمكن من تحديد المستخدم الأصلي لهذه الرسالة.")
+        await update.message.reply_text("❌ لم أتمكن من تحديد المستخدم الأصلي. تأكد من أنك ترد على رسالة مُعاد توجيهها من المستخدم.")
         logger.warning("فشل استخراج ايدي المستخدم بجميع الطرق")
         return
 
-    # إرسال رد المطور إلى المستخدم الأصلي
+    # محاولة إعادة توجيه رد المطور إلى المستخدم
     try:
         await update.message.forward(chat_id=original_user_id)
         logger.info(f"✅ تم إعادة توجيه رد المطور إلى {original_user_id}")
-
-        # إعلام المطور بالنجاح
         await update.message.reply_text("✅ تم إرسال ردك إلى المستخدم.")
     except Exception as e:
         logger.error(f"❌ فشل إرسال الرد: {e}")
-        await update.message.reply_text(
-            "❌ حدث خطأ أثناء الإرسال. قد يكون المستخدم حظر البوت أو أن الايدي غير صحيح."
-        )
+        await update.message.reply_text("❌ فشل الإرسال. المستخدم ربما حظر البوت.")
 
 def main():
     token = os.environ.get("BOT_TOKEN")
@@ -94,11 +96,12 @@ def main():
 
     app = Application.builder().token(token).build()
 
+    # ترتيب المعالجات مهم: نضع معالج ردود المطور أولاً
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Chat(OWNER_ID) & filters.REPLY, handle_owner_reply))
     app.add_handler(MessageHandler(~filters.Chat(OWNER_ID) & ~filters.COMMAND, forward_to_owner))
 
-    logger.info("البوت بدأ العمل...")
+    logger.info("البوت يعمل...")
     app.run_polling()
 
 if __name__ == "__main__":

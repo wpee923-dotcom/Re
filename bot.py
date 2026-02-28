@@ -12,12 +12,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# قراءة التوكن من المتغيرات البيئية (ضروري لـ Railway)
+# قراءة التوكن من المتغيرات البيئية
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("لم يتم العثور على BOT_TOKEN في المتغيرات البيئية!")
 
-# معرف المطور الذي أعطيته لي
+# معرف المطور (يمكنك تغييره)
 DEVELOPER_ID = 5860391324
 
 # تأكد من وجود مجلد للتحميلات
@@ -28,28 +28,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """رسالة الترحيب عند بدء البوت"""
     user_id = update.effective_user.id
     welcome_message = (
-        "مرحباً! أرسل رابط فيديو من انستغرام وسأقوم بتحميله لك بأعلى جودة بدون علامة مائية مع إرسال الوصف.\n\n"
+        "🎥 **مرحباً بك في بوت تحميل فيديوهات انستغرام!**\n\n"
+        "أرسل رابط فيديو من انستغرام وسأقوم بـ:\n"
+        "✅ تحميل الفيديو بأعلى جودة مع الصوت\n"
+        "✅ إزالة العلامة المائية\n"
+        "✅ إرسال الوصف\n\n"
         "أرسل /help للمساعدة"
     )
     
-    # إذا كان المستخدم هو المطور، أضف رسالة خاصة
     if user_id == DEVELOPER_ID:
-        welcome_message += "\n\n👑 مرحباً بك أيها المطور!"
+        welcome_message += "\n\n👑 مرحباً أيها المطور!"
     
-    await update.message.reply_text(welcome_message)
+    await update.message.reply_text(welcome_message, parse_mode='Markdown')
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """تعليمات استخدام البوت"""
     help_text = (
         "📱 **كيفية استخدام البوت:**\n\n"
-        "ما عليك سوى إرسال رابط الفيديو من انستغرام:\n"
-        "• روابط الريلز: https://www.instagram.com/reel/XXXXX/\n"
-        "• روابط المنشورات: https://www.instagram.com/p/XXXXX/\n\n"
-        "سأقوم بـ:\n"
-        "✅ تحميل الفيديو بأعلى جودة\n"
-        "✅ إزالة العلامة المائية\n"
-        "✅ إرسال الوصف\n\n"
-        "⚠️ ملاحظة: قد لا تعمل مع الحسابات الخاصة."
+        "أرسل رابط الفيديو من انستغرام، مثال:\n"
+        "• `https://www.instagram.com/reel/XXXXX/`\n"
+        "• `https://www.instagram.com/p/XXXXX/`\n\n"
+        "**ماذا ستحصل؟**\n"
+        "• فيديو بجودة عالية + صوت\n"
+        "• وصف المنشور\n"
+        "• بدون علامة مائية (إن أمكن)\n\n"
+        "⚠️ ملاحظة: قد لا يعمل مع الحسابات الخاصة."
     )
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
@@ -57,35 +60,31 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """إحصائيات البوت (للمطور فقط)"""
     user_id = update.effective_user.id
     
-    # التحقق من أن المستخدم هو المطور
     if user_id != DEVELOPER_ID:
         await update.message.reply_text("❌ هذه الميزة متاحة فقط للمطور.")
         return
     
-    # إحصائيات بسيطة
     stats_text = (
         "📊 **إحصائيات البوت**\n\n"
-        f"🔧 حالة البوت: 🟢 يعمل\n"
-        f"📂 مجلد التحميلات: موجود\n"
-        f"🆔 معرف المطور: {DEVELOPER_ID}\n"
-        f"🤖 التوكن: تم تحميله بنجاح"
+        f"🔹 الحالة: 🟢 يعمل\n"
+        f"🔹 معرف المطور: `{DEVELOPER_ID}`\n"
+        f"🔹 مجلد التحميلات: موجود\n"
+        f"🔹 FFmpeg: مثبت (ضروري للصوت)"
     )
     await update.message.reply_text(stats_text, parse_mode='Markdown')
 
 def download_instagram_video_sync(url: str):
     """
-    دالة متزامنة لتحميل الفيديو باستخدام yt-dlp.
-    يتم استدعاؤها داخل thread منفصل حتى لا تحجب الحدث.
-    تُرجع (مسار الملف, الوصف) أو ترفع استثناء.
+    تحميل الفيديو مع الصوت باستخدام yt-dlp.
     """
-    # خيارات yt-dlp
+    # خيارات yt-dlp لدمج الفيديو + الصوت وإخراج mp4
     ydl_opts = {
-        'format': 'best[ext=mp4]',          # أفضل جودة بصيغة mp4
-        'outtmpl': f'{DOWNLOADS_DIR}/%(id)s.%(ext)s',  # مسار الحفظ
+        'format': 'bestvideo+bestaudio/best',  # أفضل فيديو + أفضل صوت
+        'merge_output_format': 'mp4',           # دمج الناتج في ملف mp4
+        'outtmpl': f'{DOWNLOADS_DIR}/%(id)s.%(ext)s',
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False,
-        # إضافة User-Agent لتجنب الحظر
         'headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
@@ -93,35 +92,32 @@ def download_instagram_video_sync(url: str):
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # استخراج المعلومات أولاً للتحقق والوصف
+            # استخراج المعلومات أولاً للتحقق
             info = ydl.extract_info(url, download=False)
             
-            # التأكد أن الرابط هو فيديو انستغرام
+            # التأكد أن الرابط من انستغرام
             extractor = info.get('extractor', '').lower()
             if 'instagram' not in extractor:
                 raise ValueError("الرابط ليس من انستغرام أو غير مدعوم.")
-            
+
             # استخراج الوصف
-            description = info.get('description', 'لا يوجد وصف')
+            description = info.get('description') or info.get('title', 'لا يوجد وصف')
             
-            # تحميل الفيديو
+            # تحميل الفيديو (سيتم دمجه تلقائياً)
             ydl.download([url])
             
             # البحث عن الملف المحمل
             video_id = info.get('id')
             if video_id:
                 filename = f"{DOWNLOADS_DIR}/{video_id}.mp4"
-                # التحقق من وجود الملف
                 if os.path.exists(filename):
                     return filename, description
             
-            # إذا لم نجد بالمعرف، نبحث عن أي ملف mp4 جديد
+            # إذا لم نجد بالمعرف، نبحث عن أحدث ملف mp4
             files = [f for f in os.listdir(DOWNLOADS_DIR) if f.endswith('.mp4')]
             if files:
-                # ترتيب حسب وقت التعديل (الأحدث أولاً)
                 files.sort(key=lambda x: os.path.getmtime(os.path.join(DOWNLOADS_DIR, x)), reverse=True)
-                filename = os.path.join(DOWNLOADS_DIR, files[0])
-                return filename, description
+                return os.path.join(DOWNLOADS_DIR, files[0]), description
             
             raise Exception("لم يتم العثور على ملف الفيديو بعد التحميل.")
 
@@ -134,7 +130,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     url = update.message.text.strip()
     user_id = update.effective_user.id
 
-    # التحقق السريع من أن الرابط يحتوي على انستغرام
+    # التحقق من أن الرابط يحتوي على انستغرام
     if "instagram.com" not in url:
         await update.message.reply_text("❌ الرجاء إرسال رابط انستغرام صالح (يحتوي على instagram.com).")
         return
@@ -149,7 +145,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # حذف رسالة "جاري التحميل"
         await processing_msg.delete()
 
-        # إرسال الفيديو
+        # إرسال الفيديو مع الصوت
         with open(file_path, 'rb') as video_file:
             await update.message.reply_video(
                 video=InputFile(video_file, filename=os.path.basename(file_path)),
@@ -157,7 +153,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 supports_streaming=True
             )
 
-        # إرسال الوصف (مع تقصيره إذا كان طويلاً جداً)
+        # إرسال الوصف (مع تقصيره إذا كان طويلاً)
         if len(description) > 1000:
             description = description[:997] + "..."
         
@@ -166,15 +162,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             parse_mode='Markdown'
         )
 
-        # إرسال إشعار للمطور إذا كان المستخدم غير المطور (اختياري)
+        # إشعار المطور (اختياري)
         if user_id != DEVELOPER_ID:
             try:
                 await context.bot.send_message(
                     chat_id=DEVELOPER_ID,
-                    text=f"👤 مستخدم جديد استخدم البوت!\n🆔 المعرف: {user_id}\n🔗 الرابط: {url[:50]}..."
+                    text=f"👤 مستخدم جديد: `{user_id}`\n🔗 رابط: {url[:50]}..."
                 )
             except:
-                pass  # تجاهل الأخطاء في إرسال الإشعار
+                pass
 
     except ValueError as ve:
         await processing_msg.edit_text(f"⚠️ خطأ: {ve}")
@@ -182,7 +178,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.exception("خطأ غير متوقع")
         await processing_msg.edit_text("❌ حدث خطأ أثناء التحميل. تأكد من الرابط أو حاول لاحقاً.")
     finally:
-        # حذف الملف بعد الإرسال لتوفير المساحة
+        # حذف الملف بعد الإرسال
         if 'file_path' in locals() and os.path.exists(file_path):
             try:
                 os.remove(file_path)

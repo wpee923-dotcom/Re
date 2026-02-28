@@ -1,212 +1,211 @@
 import os
 import asyncio
 import logging
+import subprocess
 from telegram import Update, InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import yt_dlp
 
-# إعداد التسجيل لتتبع الأخطاء
+# إعداد التسجيل
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# قراءة التوكن من المتغيرات البيئية
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise ValueError("لم يتم العثور على BOT_TOKEN في المتغيرات البيئية!")
+    raise ValueError("BOT_TOKEN غير موجود في المتغيرات البيئية!")
 
-# معرف المطور (يمكنك تغييره)
 DEVELOPER_ID = 5860391324
-
-# تأكد من وجود مجلد للتحميلات
 DOWNLOADS_DIR = "downloads"
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
+# التحقق من وجود FFmpeg في النظام
+def check_ffmpeg():
+    try:
+        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+        logger.info("FFmpeg مثبت ✅")
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        logger.error("FFmpeg غير مثبت ❌")
+        return False
+
+# تحديث yt-dlp إلى آخر إصدار
+def update_ytdlp():
+    try:
+        subprocess.run(["pip", "install", "--upgrade", "yt-dlp"], check=True)
+        logger.info("yt-dlp تم تحديثه ✅")
+    except Exception as e:
+        logger.warning(f"فشل تحديث yt-dlp: {e}")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """رسالة الترحيب عند بدء البوت"""
     user_id = update.effective_user.id
-    welcome_message = (
-        "🎥 **مرحباً بك في بوت تحميل فيديوهات انستغرام!**\n\n"
-        "أرسل رابط فيديو من انستغرام وسأقوم بـ:\n"
-        "✅ تحميل الفيديو بأعلى جودة مع الصوت\n"
-        "✅ إزالة العلامة المائية\n"
-        "✅ إرسال الوصف\n\n"
-        "أرسل /help للمساعدة"
+    msg = (
+        "🎥 **بوت تحميل فيديوهات انستغرام**\n"
+        "أرسل رابط الفيديو وسأحضره لك مع الصوت.\n"
+        "/help للمساعدة"
     )
-    
     if user_id == DEVELOPER_ID:
-        welcome_message += "\n\n👑 مرحباً أيها المطور!"
-    
-    await update.message.reply_text(welcome_message, parse_mode='Markdown')
+        ffmpeg_status = "✅ موجود" if check_ffmpeg() else "❌ غير موجود"
+        msg += f"\n\n🔧 FFmpeg: {ffmpeg_status}"
+    await update.message.reply_text(msg, parse_mode='Markdown')
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """تعليمات استخدام البوت"""
-    help_text = (
-        "📱 **كيفية استخدام البوت:**\n\n"
-        "أرسل رابط الفيديو من انستغرام، مثال:\n"
-        "• `https://www.instagram.com/reel/XXXXX/`\n"
-        "• `https://www.instagram.com/p/XXXXX/`\n\n"
-        "**ماذا ستحصل؟**\n"
-        "• فيديو بجودة عالية + صوت\n"
-        "• وصف المنشور\n"
-        "• بدون علامة مائية (إن أمكن)\n\n"
-        "⚠️ ملاحظة: قد لا يعمل مع الحسابات الخاصة."
+    await update.message.reply_text(
+        "أرسل رابط انستغرام مثل:\n"
+        "`https://www.instagram.com/reel/XXXXX/`\n"
+        "`https://www.instagram.com/p/XXXXX/`",
+        parse_mode='Markdown'
     )
-    await update.message.reply_text(help_text, parse_mode='Markdown')
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """إحصائيات البوت (للمطور فقط)"""
-    user_id = update.effective_user.id
-    
-    if user_id != DEVELOPER_ID:
-        await update.message.reply_text("❌ هذه الميزة متاحة فقط للمطور.")
+    if update.effective_user.id != DEVELOPER_ID:
+        await update.message.reply_text("❌ غير مصرح")
         return
-    
-    stats_text = (
-        "📊 **إحصائيات البوت**\n\n"
-        f"🔹 الحالة: 🟢 يعمل\n"
-        f"🔹 معرف المطور: `{DEVELOPER_ID}`\n"
-        f"🔹 مجلد التحميلات: موجود\n"
-        f"🔹 FFmpeg: مثبت (ضروري للصوت)"
-    )
-    await update.message.reply_text(stats_text, parse_mode='Markdown')
+    ffmpeg = "✅ موجود" if check_ffmpeg() else "❌ غير موجود"
+    await update.message.reply_text(f"📊 **الحالة**\nFFmpeg: {ffmpeg}\nالمطور: `{DEVELOPER_ID}`", parse_mode='Markdown')
 
 def download_instagram_video_sync(url: str):
     """
-    تحميل الفيديو مع الصوت باستخدام yt-dlp.
+    تحميل الفيديو مع الصوت، وإرجاع مسار الملف والوصف.
+    في حالة الفشل، يتم رفع استثناء مع تفاصيل واضحة.
     """
-    # خيارات yt-dlp لدمج الفيديو + الصوت وإخراج mp4
+    # تأكد من وجود FFmpeg
+    if not check_ffmpeg():
+        raise RuntimeError("FFmpeg غير مثبت على الخادم. يرجى تثبيته عبر apt.txt")
+
+    # خيارات yt-dlp محسنة
     ydl_opts = {
-        'format': 'bestvideo+bestaudio/best',  # أفضل فيديو + أفضل صوت
-        'merge_output_format': 'mp4',           # دمج الناتج في ملف mp4
+        'format': 'bestvideo+bestaudio/best',  # فيديو + صوت
+        'merge_output_format': 'mp4',
         'outtmpl': f'{DOWNLOADS_DIR}/%(id)s.%(ext)s',
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False,
         'headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
+        },
+        # إذا كان هناك ملف كوكيز (يمكن وضعه في المستودع)
+        # 'cookiefile': 'cookies.txt',
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             # استخراج المعلومات أولاً للتحقق
             info = ydl.extract_info(url, download=False)
-            
-            # التأكد أن الرابط من انستغرام
             extractor = info.get('extractor', '').lower()
             if 'instagram' not in extractor:
-                raise ValueError("الرابط ليس من انستغرام أو غير مدعوم.")
+                raise ValueError("الرابط ليس من انستغرام")
 
-            # استخراج الوصف
-            description = info.get('description') or info.get('title', 'لا يوجد وصف')
-            
-            # تحميل الفيديو (سيتم دمجه تلقائياً)
+            # تحميل الفيديو
             ydl.download([url])
-            
-            # البحث عن الملف المحمل
+
+            # البحث عن الملف الناتج
             video_id = info.get('id')
             if video_id:
                 filename = f"{DOWNLOADS_DIR}/{video_id}.mp4"
                 if os.path.exists(filename):
-                    return filename, description
-            
-            # إذا لم نجد بالمعرف، نبحث عن أحدث ملف mp4
+                    return filename, info.get('description', 'لا يوجد وصف')
+
+            # البحث عن أي ملف mp4 جديد
             files = [f for f in os.listdir(DOWNLOADS_DIR) if f.endswith('.mp4')]
             if files:
                 files.sort(key=lambda x: os.path.getmtime(os.path.join(DOWNLOADS_DIR, x)), reverse=True)
-                return os.path.join(DOWNLOADS_DIR, files[0]), description
-            
-            raise Exception("لم يتم العثور على ملف الفيديو بعد التحميل.")
+                return os.path.join(DOWNLOADS_DIR, files[0]), info.get('description', 'لا يوجد وصف')
+
+            raise FileNotFoundError("لم يتم العثور على ملف الفيديو بعد التحميل")
 
     except Exception as e:
         logger.error(f"خطأ في التحميل: {e}")
-        raise
+        raise  # نرفع الاستثناء ليلتقطه المتصل
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """معالجة الرسائل النصية (الروابط)"""
     url = update.message.text.strip()
     user_id = update.effective_user.id
 
-    # التحقق من أن الرابط يحتوي على انستغرام
     if "instagram.com" not in url:
-        await update.message.reply_text("❌ الرجاء إرسال رابط انستغرام صالح (يحتوي على instagram.com).")
+        await update.message.reply_text("❌ هذا ليس رابط انستغرام")
         return
 
-    # إشعار المستخدم ببدء المعالجة
-    processing_msg = await update.message.reply_text("⏳ جاري تحميل الفيديو، يرجى الانتظار...")
+    # إعلام المستخدم بالبدء
+    status_msg = await update.message.reply_text("⏳ جاري التحميل...")
 
     try:
-        # تشغيل التحميل في thread منفصل
+        # تحديث yt-dlp (مرة واحدة عند بدء التشغيل، لكن هنا للتأكد)
+        # يمكن وضعه في بداية main بدلاً من ذلك
+        # update_ytdlp()  # قد يستغرق وقتاً
+
+        # تشغيل التحميل في thread
         file_path, description = await asyncio.to_thread(download_instagram_video_sync, url)
 
-        # حذف رسالة "جاري التحميل"
-        await processing_msg.delete()
+        await status_msg.delete()
 
-        # إرسال الفيديو مع الصوت
-        with open(file_path, 'rb') as video_file:
+        # إرسال الفيديو
+        with open(file_path, 'rb') as f:
             await update.message.reply_video(
-                video=InputFile(video_file, filename=os.path.basename(file_path)),
-                caption="✅ تم التحميل بنجاح!",
+                video=InputFile(f, filename=os.path.basename(file_path)),
+                caption="✅ تم التحميل!",
                 supports_streaming=True
             )
 
-        # إرسال الوصف (مع تقصيره إذا كان طويلاً)
-        if len(description) > 1000:
-            description = description[:997] + "..."
-        
-        await update.message.reply_text(
-            f"📝 **الوصف:**\n{description}",
-            parse_mode='Markdown'
-        )
+        # إرسال الوصف
+        desc_short = description if len(description) <= 1000 else description[:997] + "..."
+        await update.message.reply_text(f"📝 **الوصف:**\n{desc_short}", parse_mode='Markdown')
 
-        # إشعار المطور (اختياري)
+        # إبلاغ المطور باستخدام البوت
         if user_id != DEVELOPER_ID:
             try:
                 await context.bot.send_message(
                     chat_id=DEVELOPER_ID,
-                    text=f"👤 مستخدم جديد: `{user_id}`\n🔗 رابط: {url[:50]}..."
+                    text=f"👤 مستخدم: `{user_id}`\nرابط: {url[:50]}..."
                 )
             except:
                 pass
 
-    except ValueError as ve:
-        await processing_msg.edit_text(f"⚠️ خطأ: {ve}")
     except Exception as e:
-        logger.exception("خطأ غير متوقع")
-        await processing_msg.edit_text("❌ حدث خطأ أثناء التحميل. تأكد من الرابط أو حاول لاحقاً.")
+        # إرسال تفاصيل الخطأ للمطور فقط
+        error_details = f"❌ خطأ: {type(e).__name__}: {e}"
+        logger.exception("خطأ في معالجة الرابط")
+        if user_id == DEVELOPER_ID:
+            await status_msg.edit_text(error_details)
+        else:
+            await status_msg.edit_text("❌ فشل التحميل. حاول مرة أخرى لاحقاً.")
+
+        # إرسال التفاصيل للمطور أيضاً
+        try:
+            await context.bot.send_message(
+                chat_id=DEVELOPER_ID,
+                text=f"⚠️ خطأ من مستخدم {user_id}:\n{error_details}"
+            )
+        except:
+            pass
     finally:
-        # حذف الملف بعد الإرسال
+        # حذف الملف المؤقت
         if 'file_path' in locals() and os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-                logger.info(f"تم حذف الملف: {file_path}")
-            except:
-                pass
+            os.remove(file_path)
 
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """معالج الأخطاء العام"""
-    logger.error(f"حدث خطأ: {context.error}")
+def main():
+    # تحقق من FFmpeg عند بدء التشغيل
+    ffmpeg_ok = check_ffmpeg()
+    if not ffmpeg_ok:
+        logger.error("FFmpeg غير مثبت! البوت لن يعمل بشكل صحيح.")
 
-def main() -> None:
-    """تشغيل البوت"""
-    # إنشاء التطبيق
-    application = Application.builder().token(BOT_TOKEN).build()
+    # تحديث yt-dlp عند بدء التشغيل (اختياري)
+    try:
+        update_ytdlp()
+    except Exception as e:
+        logger.warning(f"فشل تحديث yt-dlp: {e}")
 
-    # إضافة الأوامر
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("stats", stats_command))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_error_handler(lambda u, c: logger.error(f"Unhandled error: {c.error}"))
 
-    # إضافة معالج الأخطاء
-    application.add_error_handler(error_handler)
-
-    # بدء البوت
-    print(f"✅ البوت يعمل... (معرف المطور: {DEVELOPER_ID})")
-    application.run_polling()
+    logger.info("✅ البوت يعمل...")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
